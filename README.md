@@ -12,6 +12,8 @@ Automated setup for custom tools and dotfiles in Exegol containers.
 - **Fd** - Fast file finder
 - **Ripgrep** - Fast text search
 - **Git Delta** - Side-by-side git diffs
+- **Yazi** - Terminal file manager (Dracula theme)
+- **Impacket Prefix** - Kali-style `impacket-` prefixes for all 69 impacket tools
 - **Custom aliases & functions** - All your host dotfiles
 
 ## How It Works
@@ -25,7 +27,8 @@ Automated setup for custom tools and dotfiles in Exegol containers.
 2. **Container Side**: Mounted at `/opt/my-resources/`
    - `load_user_setup.sh` runs on container startup
    - Installs all tools (~10 seconds)
-   - Copies custom tools to `/opt/resources/`
+   - Copies custom tools to `/opt/resources/` (1745 files in 0.375s with rsync)
+   - Creates Kali-style `impacket-` prefixes (e.g., `impacket-secretsdump`, `impacket-psexec`)
    - Sources your zshrc with all aliases
 
 3. **Custom Tools**: Stored in `my-resources/tools/` and automatically copied to `/opt/resources/` on startup
@@ -66,34 +69,58 @@ sudo cp linux_tool ~/.exegol/my-resources/tools/linux/
 # Tools automatically copied to /opt/resources/ on container startup
 ```
 
+## Impacket Tools - Kali-Style Prefix
+
+All 69 impacket tools are automatically available with the `impacket-` prefix, just like Kali Linux:
+
+```bash
+# Instead of:
+smbexec.py
+secretsdump.py
+psexec.py
+
+# Use:
+impacket-smbexec
+impacket-secretsdump
+impacket-psexec
+impacket-GetNPUsers
+impacket-wmiexec
+# ... and 64 more tools
+```
+
+This happens automatically on container startup via `setup_impacket_prefix.sh`.
+
 ## Repository Structure
 
 ```
 exegol/
-├── install.sh             # Run this to install
-├── load_user_setup.sh     # Runs in containers
-├── copy_tools.sh          # Copies custom tools
-├── setup-dotfiles.sh      # Optional dotfiles sync
-└── configs/               # Your configs (customize these!)
-    ├── zshrc              # Shell aliases & functions
-    ├── starship.toml      # Prompt configuration
-    └── zellij/            # Terminal multiplexer config
+├── install.sh                  # Run this to install
+├── load_user_setup.sh          # Runs in containers (main script)
+├── copy_tools.sh               # Copies custom tools (rsync, 0.375s)
+├── setup_impacket_prefix.sh    # Creates impacket- prefixes (Kali-style)
+├── setup-dotfiles.sh           # Optional dotfiles sync
+└── configs/                    # Your configs (customize these!)
+    ├── zshrc                   # Shell aliases & functions
+    ├── starship.toml           # Prompt configuration
+    └── zellij/                 # Terminal multiplexer config
 ```
 
 ## Installed Structure (Host)
 
 ```
 ~/.exegol/my-resources/
-├── bin/                    # Precompiled binaries (auto PATH)
+├── bin/                           # Precompiled binaries (auto PATH)
 ├── tools/
-│   ├── windows/           # Windows tools → /opt/resources/windows/
-│   └── linux/             # Linux tools → /opt/resources/linux/
+│   ├── windows/                  # Windows tools → /opt/resources/windows/
+│   └── linux/                    # Linux tools → /opt/resources/linux/
 └── setup/
-    ├── load_user_setup.sh # Runs on container startup
-    ├── copy_tools.sh      # Copies tools to /opt/resources/
-    ├── zsh/zshrc          # Your custom aliases
-    ├── starship/          # Prompt config
-    └── zellij/            # Terminal multiplexer config
+    ├── load_user_setup.sh        # Runs on container startup
+    ├── copy_tools.sh             # Copies tools to /opt/resources/
+    ├── setup_impacket_prefix.sh  # Creates impacket- prefixes
+    ├── zsh/zshrc                 # Your custom aliases
+    ├── starship/                 # Prompt config
+    ├── yazi/                     # File manager config + Dracula theme
+    └── zellij/                   # Terminal multiplexer config
 ```
 
 ## Requirements
