@@ -1,0 +1,35 @@
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*~
+
+# Logs
+*.log
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# IDE/Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test containers
+test-output/
+*.test
+
+# Private/sensitive data
+secrets/
+private/
+.env
+*.key
+*.pem
