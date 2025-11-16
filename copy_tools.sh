@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 
 # ═══════════════════════════════════════════════════════════════════
-# Copy Custom Tools to /opt/resources
+# Copy Custom Tools to /opt/resources (MERGED)
 # ═══════════════════════════════════════════════════════════════════
-# This script copies custom tools from persistent my-resources to
-# /opt/resources (non-persistent) directories in Exegol containers
+# This script merges custom tools from persistent my-resources to
+# /opt/resources (non-persistent) directory in Exegol containers
+# ALL Windows and Linux tools are merged into a single /opt/resources folder
 
 set -e
 
@@ -48,10 +49,10 @@ print_error() {
 }
 
 # ───────────────────────────────────────────────────────────────────
-# Copy Tools Function
+# Merge Tools Function
 # ───────────────────────────────────────────────────────────────────
 
-copy_tools_from_dir() {
+merge_tools_from_dir() {
     local source_dir="$1"
     local dest_dir="$2"
     local platform="$3"
@@ -61,33 +62,37 @@ copy_tools_from_dir() {
         return 0
     fi
 
-    print_info "Copying $platform tools..."
+    print_info "Merging $platform tools into $dest_dir..."
 
-    # Create destination directory
+    # Create destination directory if it doesn't exist
     mkdir -p "$dest_dir"
 
-    # Use rsync for much faster copying, excluding .git directories
+    # Use rsync to MERGE (not replace) files
     if command -v rsync &> /dev/null; then
-        rsync -a --exclude='.git/' "$source_dir/" "$dest_dir/" 2>/dev/null
-        local file_count=$(find "$dest_dir" -type f 2>/dev/null | wc -l)
+        # rsync will merge/overwrite files but NOT delete existing files
+        rsync -av --exclude='.git/' "$source_dir/" "$dest_dir/" 2>/dev/null
+        local file_count=$(find "$source_dir" -type f 2>/dev/null | wc -l)
 
         # Make common executable file types executable
         find "$dest_dir" -type f \( -name "*.exe" -o -name "*.dll" -o -name "*.ps1" -o -name "*.sh" -o -name "*.py" -o -name "*.rb" -o -name "*.pl" \) -exec chmod +x {} + 2>/dev/null
 
-        print_success "Copied $file_count $platform tool(s) to $dest_dir"
+        print_success "Merged $file_count $platform tool(s) into $dest_dir"
     else
         # Fallback to cp if rsync is not available
-        cp -rp "$source_dir"/* "$dest_dir/" 2>/dev/null
+        # cp -n will NOT overwrite existing files (keeps both)
+        # Use find to copy all files while preserving structure
+        (cd "$source_dir" && find . -type f -exec cp --parents -n {} "$dest_dir/" \; 2>/dev/null) || \
+        (cd "$source_dir" && find . -type f | cpio -pdm "$dest_dir" 2>/dev/null)
 
         # Remove .git directories
         find "$dest_dir" -type d -name ".git" -exec rm -rf {} + 2>/dev/null || true
 
-        local file_count=$(find "$dest_dir" -type f 2>/dev/null | wc -l)
+        local file_count=$(find "$source_dir" -type f 2>/dev/null | wc -l)
 
         # Make common executable file types executable
         find "$dest_dir" -type f \( -name "*.exe" -o -name "*.dll" -o -name "*.ps1" -o -name "*.sh" -o -name "*.py" -o -name "*.rb" -o -name "*.pl" \) -exec chmod +x {} + 2>/dev/null
 
-        print_success "Copied $file_count $platform tool(s) to $dest_dir"
+        print_success "Merged $file_count $platform tool(s) into $dest_dir"
     fi
 }
 
@@ -96,7 +101,7 @@ copy_tools_from_dir() {
 # ───────────────────────────────────────────────────────────────────
 
 main() {
-    print_header "Copying Custom Tools to /opt/resources"
+    print_header "Merging Custom Tools to /opt/resources"
 
     # Check if my-resources tools directory exists
     if [ ! -d "$MY_RESOURCES_TOOLS" ]; then
@@ -105,22 +110,31 @@ main() {
         exit 1
     fi
 
-    # Copy Windows tools
-    copy_tools_from_dir \
+    print_info "Merging Windows and Linux tools into single directory: $OPT_RESOURCES"
+    echo ""
+
+    # Merge Windows tools into /opt/resources
+    merge_tools_from_dir \
         "$MY_RESOURCES_TOOLS/windows" \
-        "$OPT_RESOURCES/windows" \
+        "$OPT_RESOURCES" \
         "Windows"
 
-    # Copy Linux tools
-    copy_tools_from_dir \
+    # Merge Linux tools into /opt/resources
+    merge_tools_from_dir \
         "$MY_RESOURCES_TOOLS/linux" \
-        "$OPT_RESOURCES/linux" \
+        "$OPT_RESOURCES" \
         "Linux"
 
-    print_header "Tool Copy Complete"
-    print_success "All tools have been copied to /opt/resources"
-    print_info "Windows tools: $OPT_RESOURCES/windows/"
-    print_info "Linux tools: $OPT_RESOURCES/linux/"
+    # Count total files
+    local total_files=$(find "$OPT_RESOURCES" -type f 2>/dev/null | wc -l)
+
+    print_header "Tool Merge Complete"
+    print_success "All tools have been merged to $OPT_RESOURCES"
+    print_info "Total files: $total_files"
+    print_info "All Windows and Linux tools are now in: $OPT_RESOURCES/"
+    echo ""
+    print_warning "Note: Files are MERGED, not replaced. Existing files are preserved."
+    print_warning "New files with same names will overwrite old ones."
 }
 
 # Run main function
