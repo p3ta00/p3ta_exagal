@@ -97,9 +97,12 @@ setup_directories() {
     sudo mkdir -p "$BIN_DIR"
     sudo mkdir -p "$TOOLS_DIR"/{windows,linux}
 
-    # Set proper permissions (setgid for group sharing)
-    sudo chmod 2775 "$EXEGOL_RESOURCES" "$SETUP_DIR" "$BIN_DIR" "$TOOLS_DIR"
+    # Set proper permissions
+    # BIN_DIR needs 755 so all users can execute binaries
+    # Other dirs can use 2775 (setgid for group sharing)
+    sudo chmod 2775 "$EXEGOL_RESOURCES" "$SETUP_DIR" "$TOOLS_DIR"
     sudo chmod 2775 "$TOOLS_DIR"/{windows,linux}
+    sudo chmod 755 "$BIN_DIR"  # Allow all users to access binaries
     sudo chown -R "$USER:$USER" "$EXEGOL_RESOURCES"
 
     print_success "Directory structure created"

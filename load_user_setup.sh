@@ -18,7 +18,9 @@ echo -e "${BLUE}═════════════════════�
 echo -e "${BLUE}  Loading Custom User Setup (Fast Mode)${NC}"
 echo -e "${BLUE}═══════════════════════════════════════════════════════════════════${NC}"
 
+# Create BIN_DIR with proper permissions for all users
 mkdir -p "$BIN_DIR"
+chmod 755 "$BIN_DIR"  # Ensure everyone can access and execute binaries
 
 # ───────────────────────────────────────────────────────────────────
 # Install Starship Prompt (precompiled)
@@ -174,6 +176,18 @@ fi
 
 if [ -f "$SETUP_DIR/setup_impacket_prefix.sh" ]; then
     bash "$SETUP_DIR/setup_impacket_prefix.sh"
+fi
+
+# ───────────────────────────────────────────────────────────────────
+# Fix Permissions on All Binaries
+# ───────────────────────────────────────────────────────────────────
+
+# Ensure all binaries are executable by everyone
+if [ -d "$BIN_DIR" ]; then
+    echo -e "${BLUE}[*]${NC} Fixing permissions on all binaries..."
+    chmod 755 "$BIN_DIR"
+    chmod +x "$BIN_DIR"/* 2>/dev/null || true
+    echo -e "${GREEN}[✓]${NC} Permissions fixed"
 fi
 
 echo -e "${GREEN}═══════════════════════════════════════════════════════════════════${NC}"
