@@ -33,3 +33,6 @@ private/
 .env
 *.key
 *.pem
+
+# GPU host config (auto-generated, contains local GPU info)
+gpu/gpu-host.conf
