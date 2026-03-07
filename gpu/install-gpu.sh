@@ -8,6 +8,7 @@
 #   3. Configure Docker NVIDIA runtime (if needed)
 #   4. Write gpu-host.conf so the container script can match versions
 #   5. Patch load_user_setup.sh to call setup-gpu.sh on container start
+#   6. Add --gpu shell wrapper to ~/.zshrc or ~/.bashrc
 #
 # Supports: Arch/CachyOS/EndeavourOS, Fedora/RHEL/Nobara,
 #           Debian/Ubuntu/Kali/ParrotOS
@@ -341,6 +342,90 @@ with open('$SETUP_SCRIPT','w') as f: f.write(text)
 }
 
 # --------------------------------------------------------------------------
+# 7. Add --gpu shell wrapper to user's shell rc
+# --------------------------------------------------------------------------
+setup_shell_wrapper() {
+    echo ""
+    echo -e "${BLUE}[*]${NC} Configuring shell --gpu wrapper..."
+
+    # Find exegol binary
+    EXEGOL_BIN=""
+    for candidate in \
+        "$(command -v exegol 2>/dev/null)" \
+        "${HOME}/.local/bin/exegol" \
+        "/usr/local/bin/exegol" \
+        "/usr/bin/exegol"; do
+        if [ -n "$candidate" ] && [ -f "$candidate" ]; then
+            EXEGOL_BIN="$candidate"
+            break
+        fi
+    done
+
+    if [ -z "$EXEGOL_BIN" ]; then
+        echo -e "${YELLOW}[~]${NC} Could not find exegol binary - skipping shell wrapper"
+        echo -e "${YELLOW}[~]${NC} You can manually start with: exegol start <name> <image> --privileged -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=compute,utility"
+        return
+    fi
+
+    # Detect shell rc file
+    SHELL_RC=""
+    if [ -n "$ZSH_VERSION" ] || [ "$(basename "$SHELL")" = "zsh" ]; then
+        SHELL_RC="${HOME}/.zshrc"
+    elif [ -n "$BASH_VERSION" ] || [ "$(basename "$SHELL")" = "bash" ]; then
+        SHELL_RC="${HOME}/.bashrc"
+    fi
+
+    if [ -z "$SHELL_RC" ] || [ ! -f "$SHELL_RC" ]; then
+        echo -e "${YELLOW}[~]${NC} Could not detect shell rc file - skipping shell wrapper"
+        return
+    fi
+
+    # Remove any old GPU wrapper (hardcoded driver version style)
+    if grep -q "gpu_args=(" "$SHELL_RC" 2>/dev/null; then
+        echo -e "${BLUE}[*]${NC} Removing old hardcoded GPU wrapper from ${SHELL_RC}..."
+        # Remove old exegol function block with gpu_args
+        python3 -c "
+import re
+with open('$SHELL_RC') as f: text = f.read()
+# Remove old-style wrapper with hardcoded gpu_args
+text = re.sub(r'\n*unalias exegol[^\n]*\nexegol\(\) \{[^}]*gpu_args=\([^)]*\)[^}]*\}\n*', '\n', text, flags=re.DOTALL)
+with open('$SHELL_RC','w') as f: f.write(text)
+" 2>/dev/null
+        echo -e "${GREEN}[+]${NC} Old GPU wrapper removed"
+    fi
+
+    # Check if our new wrapper already exists
+    if grep -q "# exegol-gpu: --gpu wrapper" "$SHELL_RC" 2>/dev/null; then
+        echo -e "${YELLOW}[~]${NC} GPU wrapper already present in ${SHELL_RC}"
+        return
+    fi
+
+    # Add the wrapper
+    cat >> "$SHELL_RC" << SHELLWRAPPER
+
+# exegol-gpu: --gpu wrapper (added by install-gpu.sh)
+# Translates 'exegol start <name> <image> --gpu' into the right flags.
+# No hardcoded driver versions - nvidia-container-toolkit handles everything.
+exegol() {
+    if [[ "\$1" == "start" ]] && [[ " \$* " == *" --gpu "* ]]; then
+        local args=("\${@/--gpu/}")
+        sudo -E ${EXEGOL_BIN} \${args[@]} \\
+            --privileged \\
+            -e NVIDIA_VISIBLE_DEVICES=all \\
+            -e NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    else
+        sudo -E ${EXEGOL_BIN} "\$@"
+    fi
+}
+SHELLWRAPPER
+
+    echo -e "${GREEN}[+]${NC} GPU wrapper added to ${SHELL_RC}"
+    echo -e "${BLUE}[*]${NC}   Added exegol() function that translates --gpu into:"
+    echo -e "${BLUE}[*]${NC}     --privileged -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=compute,utility"
+    echo -e "${BLUE}[*]${NC}   Run 'source ${SHELL_RC}' or open a new terminal to activate"
+}
+
+# --------------------------------------------------------------------------
 # Main
 # --------------------------------------------------------------------------
 echo "=========================================="
@@ -355,6 +440,7 @@ configure_docker_runtime
 write_config
 copy_container_script
 patch_setup_script
+setup_shell_wrapper
 
 echo ""
 echo "=========================================="
