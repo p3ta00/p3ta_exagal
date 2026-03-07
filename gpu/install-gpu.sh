@@ -4,9 +4,10 @@
 # ==========================================================================
 # Run this on your HOST machine to:
 #   1. Detect NVIDIA driver version, CUDA version, GPU model
-#   2. Verify nvidia-container-toolkit is installed
-#   3. Write gpu-host.conf so the container script can match versions
-#   4. Patch load_user_setup.sh to call setup-gpu.sh on container start
+#   2. Install nvidia-container-toolkit (if missing)
+#   3. Configure Docker NVIDIA runtime (if needed)
+#   4. Write gpu-host.conf so the container script can match versions
+#   5. Patch load_user_setup.sh to call setup-gpu.sh on container start
 #
 # Supports: Arch/CachyOS/EndeavourOS, Fedora/RHEL/Nobara,
 #           Debian/Ubuntu/Kali/ParrotOS
@@ -113,9 +114,9 @@ detect_gpu() {
 }
 
 # --------------------------------------------------------------------------
-# 2. Check nvidia-container-toolkit
+# 2. Install nvidia-container-toolkit (if missing)
 # --------------------------------------------------------------------------
-check_container_toolkit() {
+install_container_toolkit() {
     echo ""
     echo -e "${BLUE}[*]${NC} Checking nvidia-container-toolkit..."
 
@@ -125,59 +126,98 @@ check_container_toolkit() {
         return 0
     fi
 
-    echo -e "${RED}[-]${NC} nvidia-container-toolkit NOT installed."
-    echo ""
+    echo -e "${YELLOW}[~]${NC} nvidia-container-toolkit not found. Installing..."
 
     case "$DISTRO_FAMILY" in
         arch)
-            echo -e "${BLUE}[*]${NC} Install on Arch/CachyOS:"
-            echo -e "    ${YELLOW}sudo pacman -S nvidia-container-toolkit${NC}"
-            echo -e "    ${YELLOW}sudo nvidia-ctk runtime configure --runtime=docker${NC}"
-            echo -e "    ${YELLOW}sudo systemctl restart docker${NC}"
+            echo -e "${BLUE}[*]${NC} Installing via pacman..."
+            sudo pacman -S --noconfirm nvidia-container-toolkit || {
+                echo -e "${RED}[-]${NC} pacman install failed"
+                return 1
+            }
             ;;
         fedora)
-            echo -e "${BLUE}[*]${NC} Install on Fedora:"
-            echo -e "    ${YELLOW}curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo | sudo tee /etc/yum.repos.d/nvidia-container-toolkit.repo${NC}"
-            echo -e "    ${YELLOW}sudo dnf install -y nvidia-container-toolkit${NC}"
-            echo -e "    ${YELLOW}sudo nvidia-ctk runtime configure --runtime=docker${NC}"
-            echo -e "    ${YELLOW}sudo systemctl restart docker${NC}"
+            echo -e "${BLUE}[*]${NC} Adding NVIDIA repo and installing via dnf..."
+            curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo \
+                | sudo tee /etc/yum.repos.d/nvidia-container-toolkit.repo > /dev/null
+            sudo dnf install -y nvidia-container-toolkit || {
+                echo -e "${RED}[-]${NC} dnf install failed"
+                return 1
+            }
             ;;
         debian)
-            echo -e "${BLUE}[*]${NC} Install on Debian/Ubuntu:"
-            echo -e "    ${YELLOW}curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg${NC}"
-            echo -e "    ${YELLOW}curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list${NC}"
-            echo -e "    ${YELLOW}sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit${NC}"
-            echo -e "    ${YELLOW}sudo nvidia-ctk runtime configure --runtime=docker${NC}"
-            echo -e "    ${YELLOW}sudo systemctl restart docker${NC}"
+            echo -e "${BLUE}[*]${NC} Adding NVIDIA repo and installing via apt..."
+            curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+                | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg 2>/dev/null
+            curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+                | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+                | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list > /dev/null
+            sudo apt-get update -qq && sudo apt-get install -y nvidia-container-toolkit || {
+                echo -e "${RED}[-]${NC} apt install failed"
+                return 1
+            }
             ;;
         *)
+            echo -e "${RED}[-]${NC} Unsupported distro family: ${DISTRO_FAMILY}"
             echo -e "${YELLOW}[~]${NC} See: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html"
+            return 1
             ;;
     esac
 
-    echo ""
-    echo -e "${YELLOW}[~]${NC} After installing, re-run this script."
-    return 1
+    # Verify it installed
+    if ! command -v nvidia-container-cli &>/dev/null; then
+        echo -e "${RED}[-]${NC} Installation completed but nvidia-container-cli not found"
+        return 1
+    fi
+
+    NCT_VERSION=$(nvidia-container-cli --version 2>/dev/null | head -1)
+    echo -e "${GREEN}[+]${NC} nvidia-container-toolkit installed: ${NCT_VERSION}"
 }
 
 # --------------------------------------------------------------------------
-# 3. Verify docker runtime is configured
+# 3. Configure Docker NVIDIA runtime (if needed)
 # --------------------------------------------------------------------------
-check_docker_runtime() {
+configure_docker_runtime() {
     echo ""
     echo -e "${BLUE}[*]${NC} Checking Docker NVIDIA runtime..."
 
     if ! command -v docker &>/dev/null; then
-        echo -e "${YELLOW}[~]${NC} Docker not found - skipping runtime check"
+        echo -e "${YELLOW}[~]${NC} Docker not found - skipping runtime config"
+        echo -e "${YELLOW}[~]${NC} Install Docker, then re-run this script"
         return
     fi
 
     DOCKER_RUNTIMES=$(docker info 2>/dev/null | grep -i "runtimes" || echo "")
     if echo "$DOCKER_RUNTIMES" | grep -qi "nvidia"; then
-        echo -e "${GREEN}[+]${NC} Docker NVIDIA runtime configured"
+        echo -e "${GREEN}[+]${NC} Docker NVIDIA runtime already configured"
+        return
+    fi
+
+    echo -e "${YELLOW}[~]${NC} Docker NVIDIA runtime not configured. Configuring..."
+
+    if ! command -v nvidia-ctk &>/dev/null; then
+        echo -e "${RED}[-]${NC} nvidia-ctk not found - cannot configure runtime"
+        return 1
+    fi
+
+    sudo nvidia-ctk runtime configure --runtime=docker 2>/dev/null || {
+        echo -e "${RED}[-]${NC} Failed to configure Docker runtime"
+        return 1
+    }
+
+    echo -e "${BLUE}[*]${NC} Restarting Docker..."
+    sudo systemctl restart docker 2>/dev/null || {
+        echo -e "${YELLOW}[~]${NC} Could not restart Docker via systemctl"
+        echo -e "${YELLOW}[~]${NC} Restart Docker manually, then re-run this script"
+        return
+    }
+
+    # Verify after restart
+    DOCKER_RUNTIMES=$(docker info 2>/dev/null | grep -i "runtimes" || echo "")
+    if echo "$DOCKER_RUNTIMES" | grep -qi "nvidia"; then
+        echo -e "${GREEN}[+]${NC} Docker NVIDIA runtime configured and verified"
     else
-        echo -e "${YELLOW}[~]${NC} Docker NVIDIA runtime not detected."
-        echo -e "${YELLOW}[~]${NC} Run: sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker"
+        echo -e "${YELLOW}[~]${NC} Runtime configured but not detected - Docker may need a manual restart"
     fi
 }
 
@@ -291,8 +331,8 @@ echo ""
 
 detect_distro
 detect_gpu
-check_container_toolkit || exit 1
-check_docker_runtime
+install_container_toolkit || exit 1
+configure_docker_runtime
 write_config
 copy_container_script
 patch_setup_script
