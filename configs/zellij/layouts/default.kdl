@@ -5,7 +5,7 @@ layout {
             plugin location="file:/root/.config/zellij/plugins/zjstatus.wasm" {
                 format_left   "{mode} #[fg=#7aa2f7,bold] {session} #[fg=#565f89]│ #[fg=#7dcfff] {command_pwd}"
                 format_center "{tabs}"
-                format_right  "#[fg=#7aa2f7]Network: {command_ip} #[fg=#565f89]│ #[fg=#f7768e]{command_listeners} #[fg=#565f89]│ #[fg=#bb9af7] {datetime}"
+                format_right  "#[fg=#9ece6a] {command_ip} #[fg=#565f89]│ #[fg=#bb9af7] {datetime}"
 
                 // Mode indicators with hints
                 mode_normal          "#[bg=#9ece6a,fg=#1a1b26,bold]  NORMAL "
@@ -32,22 +32,16 @@ layout {
                 tab_separator           "#[fg=#565f89]│"
 
                 // Current working directory
-                command_pwd_command     "pwd | sed 's|^'$HOME'|~|' | awk -F'/' '{if (length($0) > 32) {if (NF>4) print $1\"/\"$2\"/…/\"$(NF-1)\"/\"$NF; else print $0} else print $0}'"
+                command_pwd_command     "bash /root/.config/zellij/scripts/get-pwd.sh"
                 command_pwd_interval    "2"
                 command_pwd_format      "{stdout}"
                 command_pwd_rendermode  "dynamic"
 
-                // Network interfaces (tun0, eth, wlan)
-                command_ip_command      "/root/.config/zellij/scripts/get-tun0-ip.sh"
+                // IP address (tun0/VPN or eth0 fallback)
+                command_ip_command      "bash /root/.config/zellij/scripts/get-ip.sh"
                 command_ip_interval     "5"
-                command_ip_format       "{stdout}"
+                command_ip_format       "#[fg=#9ece6a] {stdout}"
                 command_ip_rendermode   "dynamic"
-
-                // Listener monitoring for CTF
-                command_listeners_command      "/root/.config/zellij/scripts/monitor-listeners.sh"
-                command_listeners_interval     "3"
-                command_listeners_format       "{stdout}"
-                command_listeners_rendermode   "dynamic"
 
                 // Date and time
                 datetime                "{format}"

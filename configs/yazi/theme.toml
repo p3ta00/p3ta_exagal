@@ -1,0 +1,6 @@
+[flavor]
+use = "tokyo-night"
+
+[mode]
+normal_main = { fg = "#c0caf5", bg = "#3d59a1", bold = true }
+normal_alt  = { fg = "#3d59a1", bg = "#292e42" }

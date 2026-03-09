@@ -1,0 +1,45 @@
+#!/bin/bash
+# Save BloodHound CE databases to persistent storage
+# Run this inside an Exegol container before stopping it
+
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+SAVE_DIR="/opt/my-resources/setup/bloodhound/data"
+mkdir -p "$SAVE_DIR"
+
+# Ensure services are running
+service postgresql start 2>/dev/null
+neo4j start 2>/dev/null
+sleep 2
+
+echo -e "${BLUE}[*]${NC} Saving BloodHound CE databases..."
+
+# Dump PostgreSQL
+echo -e "${BLUE}[*]${NC} Dumping PostgreSQL database..."
+if su - postgres -c "pg_dump bloodhound" > "$SAVE_DIR/pg_backup.sql" 2>/dev/null; then
+    echo -e "${GREEN}[+]${NC} PostgreSQL dump saved ($(du -h "$SAVE_DIR/pg_backup.sql" | cut -f1))"
+else
+    echo -e "${RED}[-]${NC} PostgreSQL dump failed"
+    exit 1
+fi
+
+# Dump Neo4j
+echo -e "${BLUE}[*]${NC} Dumping Neo4j database..."
+neo4j stop 2>/dev/null
+sleep 2
+rm -rf "$SAVE_DIR/neo4j_dump"
+if neo4j-admin database dump neo4j --to-path="$SAVE_DIR/neo4j_dump" 2>/dev/null; then
+    echo -e "${GREEN}[+]${NC} Neo4j dump saved ($(du -sh "$SAVE_DIR/neo4j_dump" | cut -f1))"
+else
+    # Fallback: copy data directory
+    echo -e "${BLUE}[*]${NC} neo4j-admin dump failed, copying data directory..."
+    rm -rf "$SAVE_DIR/neo4j_data"
+    cp -a /var/lib/neo4j/data "$SAVE_DIR/neo4j_data"
+    echo -e "${GREEN}[+]${NC} Neo4j data directory copied ($(du -sh "$SAVE_DIR/neo4j_data" | cut -f1))"
+fi
+neo4j start 2>/dev/null
+
+echo -e "${GREEN}[+]${NC} BloodHound CE databases saved to $SAVE_DIR"

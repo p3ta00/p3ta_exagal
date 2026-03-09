@@ -1,133 +1,130 @@
 #!/bin/bash
-# Starship setup for Exegol
 
-set -e
+# This script will be executed on the first startup of each new container with the "my-resources" feature enabled.
 
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
+RED='\033[0;31m'
 NC='\033[0m'
 
-BIN_DIR="/opt/my-resources/bin"
-SETUP_DIR="/opt/my-resources/setup"
-
-mkdir -p "$BIN_DIR"
-chmod 755 "$BIN_DIR"
-
-# Install Starship
-if [ ! -f "$BIN_DIR/starship" ]; then
-    echo -e "${BLUE}[*]${NC} Installing Starship..."
-    curl -sS https://starship.rs/install.sh | sh -s -- -y --bin-dir="$BIN_DIR"
-    echo -e "${GREEN}[✓]${NC} Starship installed"
+# ============================================================================
+# Install CLI Tools (starship, eza, bat, fd, zoxide, delta, zellij)
+# ============================================================================
+if [ -f /opt/my-resources/setup/install-tools.sh ]; then
+    /opt/my-resources/setup/install-tools.sh || echo -e "${RED}[-]${NC} install-tools.sh had errors, continuing..."
 fi
 
-# Copy starship config
-if [ -f "$SETUP_DIR/starship/starship.toml" ]; then
-    mkdir -p /root/.config
-    cp "$SETUP_DIR/starship/starship.toml" /root/.config/starship.toml
-    echo -e "${GREEN}[✓]${NC} Starship config installed"
+# ============================================================================
+# UwU Toolkit Setup
+# ============================================================================
+UWU_DIR="/opt/my-resources/bin/uwu-toolkit"
+if [ -d "$UWU_DIR" ]; then
+    echo -e "${BLUE}[*]${NC} Setting up UwU Toolkit..."
+    chmod +x "$UWU_DIR/uwu" "$UWU_DIR/uwu.py" "$UWU_DIR/uwu_dashboard" 2>/dev/null
+    ln -sf "$UWU_DIR/uwu" /usr/local/bin/uwu
+    ln -sf "$UWU_DIR/uwu_dashboard" /usr/local/bin/uwu-dashboard
+
+    # Install Python dependencies
+    pip3 install prompt_toolkit rich requests pyyaml donut-shellcode 2>/dev/null || true
+
+    # Fix donut execstack issue (glibc 2.38+ blocks executable stack)
+    python3 -c "
+import struct, glob
+for so in glob.glob('/usr/local/lib/python*/dist-packages/donut*.so') + glob.glob('/root/.pyenv/versions/*/lib/python*/site-packages/donut*.so'):
+    with open(so,'rb') as f: data=bytearray(f.read())
+    e_phoff=struct.unpack_from('<Q',data,32)[0]; e_phentsize=struct.unpack_from('<H',data,54)[0]; e_phnum=struct.unpack_from('<H',data,56)[0]
+    for i in range(e_phnum):
+        off=e_phoff+i*e_phentsize; p_type=struct.unpack_from('<I',data,off)[0]
+        if p_type==0x6474e551:
+            p_flags=struct.unpack_from('<I',data,off+4)[0]
+            if p_flags&1: struct.pack_into('<I',data,off+4,p_flags&~1); open(so,'wb').write(data); print(f'[+] Patched {so}')
+            break
+" 2>/dev/null || true
+
+    echo -e "${GREEN}[+]${NC} UwU Toolkit installed - run 'uwu' to start"
 fi
 
-# Disable Exegol's prompt hook (let Starship handle it)
-sed -i 's/add-zsh-hook precmd update_prompt/#add-zsh-hook precmd update_prompt/g' /root/.zshrc
-
-# Remove zsh-z plugin (conflicts with zoxide)
-sed -i 's/zsh-z //' /root/.zshrc
-
-# Add starship init after oh-my-zsh (if not already present)
-if ! grep -q 'eval "$(starship init zsh)"' /root/.zshrc 2>/dev/null; then
-    # Insert starship init right after oh-my-zsh sourcing
-    sed -i '/source \$ZSH\/oh-my-zsh.sh/a\  # Starship prompt\n  export PATH="/opt/my-resources/bin:$PATH"\n  export STARSHIP_CONFIG=~/.config/starship.toml\n  eval "$(starship init zsh)"' /root/.zshrc
-    echo -e "${GREEN}[✓]${NC} Starship init added to .zshrc"
+# ============================================================================
+# Donut shellcode generator CLI
+# ============================================================================
+if ! command -v donut &>/dev/null; then
+    echo -e "${BLUE}[*]${NC} Installing donut CLI wrapper..."
+    pip3 install donut-shellcode 2>/dev/null || true
+    cat > /usr/local/bin/donut << 'DONUTEOF'
+#!/usr/bin/env python3
+import sys, getopt, donut
+def usage():
+    print("Usage: donut -i <input> [-o output] [-a arch] [-b bypass] [-p params]")
+    sys.exit(1)
+if len(sys.argv) < 2: usage()
+try: opts, args = getopt.getopt(sys.argv[1:], "i:o:a:b:p:h")
+except getopt.GetoptError: usage()
+infile = None; outfile = "loader.bin"; kwargs = {}
+for o, v in opts:
+    if o == "-i": infile = v
+    elif o == "-o": outfile = v
+    elif o == "-a": kwargs["arch"] = int(v)
+    elif o == "-b": kwargs["bypass"] = int(v)
+    elif o == "-p": kwargs["params"] = v
+    elif o == "-h": usage()
+if not infile: usage()
+sc = donut.create(file=infile, **kwargs)
+if sc: open(outfile, "wb").write(sc); print(f"[+] Shellcode written to {outfile} ({len(sc)} bytes)")
+else: print("[-] Failed"); sys.exit(1)
+DONUTEOF
+    chmod +x /usr/local/bin/donut
+    echo -e "${GREEN}[+]${NC} donut installed"
 fi
 
-# Install Zellij
-if [ ! -f "$BIN_DIR/zellij" ]; then
-    echo -e "${BLUE}[*]${NC} Installing Zellij..."
-    curl -sL https://github.com/zellij-org/zellij/releases/latest/download/zellij-x86_64-unknown-linux-musl.tar.gz | tar -xz -C "$BIN_DIR"
-    chmod +x "$BIN_DIR/zellij"
-    echo -e "${GREEN}[✓]${NC} Zellij installed"
+# ============================================================================
+# BloodHound CE Fix - Patch STORAGE MAIN for PostgreSQL 15 compatibility
+# ============================================================================
+BH_BIN="/opt/tools/BloodHound-CE/bloodhound"
+if [ -f "$BH_BIN" ]; then
+    if strings "$BH_BIN" | grep -q "STORAGE MAIN" 2>/dev/null; then
+        echo -e "${BLUE}[*]${NC} Patching BloodHound CE for PostgreSQL 15 compatibility..."
+        python3 -c "
+data = open('$BH_BIN', 'rb').read()
+old = b'TEXT STORAGE MAIN'
+new = b'TEXT             '
+if old in data:
+    data = data.replace(old, new)
+    open('$BH_BIN', 'wb').write(data)
+    print('[+] BloodHound CE patched successfully')
+else:
+    print('[*] BloodHound CE already patched')
+" 2>/dev/null || echo -e "${RED}[-]${NC} BloodHound CE patch failed, continuing..."
+    else
+        echo -e "${GREEN}[+]${NC} BloodHound CE already compatible"
+    fi
 fi
 
-# Copy zellij config
-if [ -d "$SETUP_DIR/zellij" ]; then
-    mkdir -p /root/.config/zellij
-    cp -r "$SETUP_DIR/zellij/"* /root/.config/zellij/
-    echo -e "${GREEN}[✓]${NC} Zellij config installed"
+# ============================================================================
+# BloodHound CE Database Persistence
+# ============================================================================
+if [ -f /opt/my-resources/setup/bloodhound/setup-bloodhound.sh ]; then
+    /opt/my-resources/setup/bloodhound/setup-bloodhound.sh || echo -e "${RED}[-]${NC} BloodHound CE restore had errors, continuing..."
 fi
 
-# Install CLI tools if missing
-if [ ! -f "$BIN_DIR/eza" ]; then
-    echo -e "${BLUE}[*]${NC} Installing eza..."
-    curl -sL "https://github.com/eza-community/eza/releases/latest/download/eza_x86_64-unknown-linux-musl.tar.gz" | tar -xz -C "$BIN_DIR"
-    chmod +x "$BIN_DIR/eza"
-    echo -e "${GREEN}[✓]${NC} eza installed"
+# ============================================================================
+# Firefox Profile Persistence
+# ============================================================================
+if [ -f /opt/my-resources/setup/firefox/setup-firefox.sh ]; then
+    /opt/my-resources/setup/firefox/setup-firefox.sh || echo -e "${RED}[-]${NC} Firefox setup had errors, continuing..."
 fi
 
-if [ ! -f "$BIN_DIR/bat" ]; then
-    echo -e "${BLUE}[*]${NC} Installing bat..."
-    BAT_VERSION=$(curl -s https://api.github.com/repos/sharkdp/bat/releases/latest | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/')
-    curl -sL "https://github.com/sharkdp/bat/releases/latest/download/bat-v${BAT_VERSION}-x86_64-unknown-linux-musl.tar.gz" | tar -xz -C /tmp
-    mv "/tmp/bat-v${BAT_VERSION}-x86_64-unknown-linux-musl/bat" "$BIN_DIR/bat"
-    rm -rf "/tmp/bat-v${BAT_VERSION}-x86_64-unknown-linux-musl"
-    chmod +x "$BIN_DIR/bat"
-    echo -e "${GREEN}[✓]${NC} bat installed"
+# ============================================================================
+# NVIDIA GPU Setup (driver-aware, auto-detected)
+# ============================================================================
+if [ -f /opt/my-resources/setup/gpu/setup-gpu.sh ]; then
+    /opt/my-resources/setup/gpu/setup-gpu.sh || echo -e "${RED}[-]${NC} GPU setup had errors, continuing..."
 fi
 
-if [ ! -f "$BIN_DIR/fd" ]; then
-    echo -e "${BLUE}[*]${NC} Installing fd..."
-    FD_VERSION=$(curl -s https://api.github.com/repos/sharkdp/fd/releases/latest | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/')
-    curl -sL "https://github.com/sharkdp/fd/releases/latest/download/fd-v${FD_VERSION}-x86_64-unknown-linux-musl.tar.gz" | tar -xz -C /tmp
-    mv "/tmp/fd-v${FD_VERSION}-x86_64-unknown-linux-musl/fd" "$BIN_DIR/fd"
-    rm -rf "/tmp/fd-v${FD_VERSION}-x86_64-unknown-linux-musl"
-    chmod +x "$BIN_DIR/fd"
-    echo -e "${GREEN}[✓]${NC} fd installed"
+# ============================================================================
+# Sliver C2 Persistence (server data + armory extensions)
+# ============================================================================
+if [ -f /opt/my-resources/setup/sliver/setup-sliver.sh ]; then
+    /opt/my-resources/setup/sliver/setup-sliver.sh || echo -e "${RED}[-]${NC} Sliver setup had errors, continuing..."
 fi
 
-if [ ! -f "$BIN_DIR/zoxide" ]; then
-    echo -e "${BLUE}[*]${NC} Installing zoxide..."
-    curl -sSfL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh -s -- --bin-dir "$BIN_DIR"
-    echo -e "${GREEN}[✓]${NC} zoxide installed"
-fi
-
-if [ ! -f "$BIN_DIR/delta" ]; then
-    echo -e "${BLUE}[*]${NC} Installing delta..."
-    DELTA_VERSION=$(curl -s https://api.github.com/repos/dandavison/delta/releases/latest | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
-    curl -sL "https://github.com/dandavison/delta/releases/latest/download/delta-${DELTA_VERSION}-x86_64-unknown-linux-musl.tar.gz" | tar -xz -C /tmp
-    mv "/tmp/delta-${DELTA_VERSION}-x86_64-unknown-linux-musl/delta" "$BIN_DIR/delta"
-    rm -rf "/tmp/delta-${DELTA_VERSION}-x86_64-unknown-linux-musl"
-    chmod +x "$BIN_DIR/delta"
-    echo -e "${GREEN}[✓]${NC} delta installed"
-fi
-
-# Create bat config (disable pager by default)
-mkdir -p /root/.config/bat
-cat > /root/.config/bat/config << 'BATCFG'
---paging=never
---style=plain
---theme=Dracula
-BATCFG
-echo -e "${GREEN}[✓]${NC} bat config installed"
-
-# Add shell integrations (aliases and zoxide init)
-if ! grep -q 'eval "$(zoxide init zsh)"' /root/.zshrc 2>/dev/null; then
-    cat >> /root/.zshrc << 'EOF'
-
-# CLI tool aliases and integrations
-alias ls='eza --icons'
-alias ll='eza -la --icons'
-alias la='eza -a --icons'
-alias lt='eza --tree --icons'
-alias cat='bat --style=plain --paging=never'
-alias catp='bat --style=full --paging=auto'
-eval "$(zoxide init zsh)"
-EOF
-    echo -e "${GREEN}[✓]${NC} CLI tool integrations added to .zshrc"
-fi
-
-# Configure git to use delta
-git config --global core.pager "delta" 2>/dev/null || true
-git config --global interactive.diffFilter "delta --color-only" 2>/dev/null || true
-git config --global delta.navigate true 2>/dev/null || true
-git config --global delta.line-numbers true 2>/dev/null || true
-
-echo -e "${GREEN}[✓]${NC} Setup complete!"
+echo -e "${GREEN}[+]${NC} First-time setup complete!"
