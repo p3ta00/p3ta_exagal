@@ -127,4 +127,38 @@ if [ -f /opt/my-resources/setup/sliver/setup-sliver.sh ]; then
     /opt/my-resources/setup/sliver/setup-sliver.sh || echo -e "${RED}[-]${NC} Sliver setup had errors, continuing..."
 fi
 
+# ============================================================================
+# Killshot - Global PATH
+# ============================================================================
+if [ -f /opt/my-resources/avbypass/killshot.sh ]; then
+    ln -sf /opt/my-resources/avbypass/killshot.sh /usr/local/bin/killshot
+    chmod +x /opt/my-resources/avbypass/killshot.sh
+    echo -e "${GREEN}[+]${NC} killshot installed to PATH"
+fi
+
+# ============================================================================
+# Sliver Daemon Auto-Start
+# ============================================================================
+SLIVER_SERVER=$(which sliver-server 2>/dev/null || echo "/opt/tools/bin/sliver-server")
+if [ -x "$SLIVER_SERVER" ] && ! pgrep -f "sliver-server daemon" > /dev/null 2>&1; then
+    echo -e "${BLUE}[*]${NC} Starting Sliver daemon..."
+    SLIVER_ROOT_DIR="${HOME}/.sliver" nohup "$SLIVER_SERVER" daemon > /tmp/sliver-daemon.log 2>&1 &
+    sleep 2
+    if pgrep -f "sliver-server daemon" > /dev/null 2>&1; then
+        echo -e "${GREEN}[+]${NC} Sliver daemon started"
+    else
+        echo -e "${RED}[-]${NC} Sliver daemon failed to start"
+    fi
+fi
+
+# ============================================================================
+# Burp Suite Pro License Persistence
+# ============================================================================
+if [ -d /opt/my-resources/setup/burp-config/burp ] && [ ! -f /root/.java/.userPrefs/burp/prefs.xml ]; then
+    echo -e "${BLUE}[*]${NC} Restoring Burp Suite Pro license..."
+    mkdir -p /root/.java/.userPrefs
+    cp -r /opt/my-resources/setup/burp-config/burp /root/.java/.userPrefs/burp
+    echo -e "${GREEN}[+]${NC} Burp Suite Pro license restored"
+fi
+
 echo -e "${GREEN}[+]${NC} First-time setup complete!"
